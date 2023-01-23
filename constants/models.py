@@ -1,0 +1,7 @@
+REDIS_PRIMARY_KEY_PATTERN = '{index}-{primary}'
+REDIS_INDEX_PATTERN = '{index}-{key_value_pair}'
+REDIS_PRIMARY_FOREIGN_KEY_PATTERN = '{index}-{primary}-{foreign_key}'
+REDIS_FOREIGN_PRIMARY_KEY_PATTERN = '{index}-{foreign_key_value_pair}'
+REDIS_FOREIGN_COUNT = '{index}-{foreign_key_value_pair}_count'
+REDIS_FOREIGN_SIZE = '{index}-{foreign_key_value_pair}_size'
+REDIS_FOREIGN_PARTITION = '{index}-{foreign_key_value_pair}_partition'
