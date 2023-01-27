@@ -16,10 +16,11 @@ class FieldMeta(type):
 
 
 class FieldABC:
-    def __init__(self, default, primary, unique):
+    def __init__(self, default, primary, unique, required):
         self.value = default
         self.primary = primary
         self.unique = unique
+        self.required = required
 
     @property
     def value(self):
@@ -27,27 +28,28 @@ class FieldABC:
 
     @value.setter
     def value(self, value):
-        self._value = value
+        if self.check_value(value):
+            self._value = value
+        else:
+            raise ValueError
 
     def check_value(self, value):
         return True
 
     def serializer(self):
-        return self.value
+        return self._value
 
     def deserialize(self, value):
-        if self.check_value(value):
-            self.value = value
-        else:
-            raise RuntimeError
+        self.value = value
 
 
 class IntegerField(FieldABC, metaclass=FieldMeta):
-    def __init__(self, default=0, primary=False, unique=False):
-        super().__init__(default, primary, unique)
+    def __init__(self, default=None, primary=False, unique=False, required=False):
+        super().__init__(default, primary, unique, required)
 
     @property
     def value(self):
+        assert self._value is not None
         return self._value
 
     @value.setter
@@ -62,13 +64,13 @@ class IntegerField(FieldABC, metaclass=FieldMeta):
 
 
 class CharField(FieldABC, metaclass=FieldMeta):
-    def __init__(self, default='', primary=False, unique=False):
-        super().__init__(default, primary, unique)
+    def __init__(self, default='', primary=False, unique=False, required=False):
+        super().__init__(default, primary, unique, required)
 
 
 class DatetimeField(FieldABC, metaclass=FieldMeta):
-    def __init__(self, default=datetime.now(), auto_now_add: bool = False, auto_now: bool = False):
-        super().__init__(default, False, False)
+    def __init__(self, default=datetime.now(), auto_now_add: bool = False, auto_now: bool = False, required=False):
+        super().__init__(default, False, False, required)
         self._auto_now_add = auto_now_add
         self._auto_now = auto_now
 
@@ -90,6 +92,11 @@ class DatetimeField(FieldABC, metaclass=FieldMeta):
 
     @property
     def value(self):
+        if not self._value and self.auto_now:
+            return datetime.now()
+        if not self._value and self.auto_now_add:
+            return datetime.now()
+        assert not self._value
         try:
             return datetime.strptime(self._value, DATETIME_PATTERN)
         except ValueError:
@@ -104,11 +111,12 @@ class DatetimeField(FieldABC, metaclass=FieldMeta):
 
 
 class ListField(FieldABC, metaclass=FieldMeta):
-    def __init__(self, default: list = list()):
-        super().__init__(default, False, False)
+    def __init__(self, default: list = list(), required=False):
+        super().__init__(default, False, False, required)
 
     @property
     def value(self):
+        assert not self._value
         try:
             return json.loads(self._value)
         except:
@@ -124,8 +132,8 @@ class ListField(FieldABC, metaclass=FieldMeta):
 
 
 class JsonField(FieldABC, metaclass=FieldMeta):
-    def __init__(self, default: dict = dict()):
-        super().__init__(default, False, False)
+    def __init__(self, default: dict = dict(), required=False):
+        super().__init__(default, False, False, required)
 
     @property
     def value(self):
@@ -144,8 +152,8 @@ class JsonField(FieldABC, metaclass=FieldMeta):
 
 
 class ForeignField(FieldABC, metaclass=FieldMeta):
-    def __init__(self, model, unique=False):
-        super().__init__(None, False, unique)
+    def __init__(self, model, unique=False, required=False):
+        super().__init__(None, False, unique, required)
         self.model = model
 
     @property
@@ -154,8 +162,17 @@ class ForeignField(FieldABC, metaclass=FieldMeta):
 
     @value.setter
     def value(self, value):
-        assert isinstance(value, int) or isinstance(value, str)
-        self._value = value
+        from .models import BaseModel
+        if not value:
+            self._value = None
+        elif isinstance(value, BaseModel):
+            self._value = value.__dict__.get(self.model.primary_key)
+        else:
+            assert isinstance(value, int) or isinstance(value, str)
+            if self.check_value(value):
+                self._value = value
+            else:
+                raise ValueError
 
     def check_value(self, value):
-        return redis_conn.exists(REDIS_PRIMARY_KEY_PATTERN.format(index=self.model.index_name,primary=value))
+        return redis_conn.exists(REDIS_PRIMARY_KEY_PATTERN.format(index=self.model.index_name, primary=value))
