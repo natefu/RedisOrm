@@ -3,7 +3,9 @@ from .fields import FieldABC, IntegerField, ForeignField, DatetimeField
 from client import redis_conn as conn
 from constants.models import (
     REDIS_PRIMARY_DEFAULT_INCR_KEY, DEFAULT_PRIMARY_KEY, UNIQUE_TOGETHER, CONCRETE_FIELDS, PRIMARY_KEY, UNIQUE_KEYS,
-    FOREIGN_KEYS, INDEXES_KEYS, REDIS_UNIQUE_PATTERN,
+    FOREIGN_KEYS, INDEXES_KEYS, REDIS_UNIQUE_PATTERN, REDIS_INDEX_PATTERN, REDIS_INDEX_PARTITION, REDIS_INDEX_COUNT,
+    REDIS_INDEX_POS, BIG_KEY_LIMIT, REDIS_INDEX_PRIMARY_KEY_PATTERN, REDIS_PRIMARY_KEY_PATTERN,
+    REDIS_PRIMARY_FOREIGN_VALUE_PATTERN,
 )
 
 
@@ -86,7 +88,28 @@ class BaseModel(metaclass=ModelMeta):
         else:
             return None, None
 
-    def _save_index(self, index_name):
+    def _set_big_keys(self, model_name, primary_key, value):
+        position = conn.incr(REDIS_INDEX_POS.format(hash=self.Meta.hash_name, value=value))
+        conn.incr(REDIS_INDEX_COUNT.format(hash=self.Meta.hash_name, value=value))
+        if position % BIG_KEY_LIMIT == 1:
+            partition = conn.incr(REDIS_INDEX_PARTITION.format(hash=self.Meta.hash_name, value=value))
+        else:
+            partition = conn.get(REDIS_INDEX_PARTITION.format(hash=self.Meta.hash_name, value=value))
+        conn.hset(
+            REDIS_INDEX_PRIMARY_KEY_PATTERN.format(hash=model_name, value=value, partition=partition),
+            f'{self.Meta.hash_name}-{primary_key}', 1
+        )
+        return position
+
+    def _delete_big_keys(self, model_name, primary_key, value, position):
+        conn.decr(REDIS_INDEX_COUNT.format(hash=self.Meta.hash_name, value=value))
+        partition = position % BIG_KEY_LIMIT + 1
+        conn.hdel(
+            REDIS_INDEX_PRIMARY_KEY_PATTERN.format(hash=model_name, value=value, partition=partition),
+            f'{self.Meta.hash_name}-{primary_key}'
+        )
+
+    def _save_indexes(self, primary_key):
         # 没有级联删除，只能手动删除
         for unique in getattr(self, UNIQUE_KEYS):
             if isinstance(unique, list):
@@ -94,39 +117,109 @@ class BaseModel(metaclass=ModelMeta):
                 for key in unique:
                     key_value_pair.append('-'.join(self._retrieve_key_value_from_name(key)))
                 key_value_pair = '-'.join(key_value_pair)
-                assert conn.setnx(REDIS_UNIQUE_PATTERN.format(index=index_name, key_value_pair=key_value_pair), 1)
+                assert conn.setnx(REDIS_UNIQUE_PATTERN.format(hash=self.Meta.hash_name, value=key_value_pair), 1)
             elif isinstance(unique, str) or isinstance(unique, int):
                 key_value_pair = '-'.join(self._retrieve_key_value_from_name(unique))
-                assert conn.setnx(REDIS_UNIQUE_PATTERN.format(index=index_name, key_value_pair=key_value_pair), 1)
-
+                assert conn.setnx(REDIS_UNIQUE_PATTERN.format(hash=self.Meta.hash_name, value=key_value_pair), 1)
+        index_positions = {}
         for indexes in getattr(self, INDEXES_KEYS):
             for index in indexes:
                 key_value_pair = []
                 for key in index:
                     key_value_pair.append('-'.join(self._retrieve_key_value_from_name(key)))
                 key_value_pair = '-'.join(key_value_pair)
-                conn.
+                position = self._set_big_keys(model_name=self.Meta.hash_name, primary_key=primary_key, value=key_value_pair)
+                index_positions[key_value_pair] = position
+        return index_positions
+
+    def _delete_indexes(self, primary_key, positions):
+        for unique in getattr(self, UNIQUE_KEYS):
+            if isinstance(unique, list):
+                key_value_pair = []
+                for key in unique:
+                    key_value_pair.append('-'.join(self._retrieve_key_value_from_name(key)))
+                key_value_pair = '-'.join(key_value_pair)
+                conn.delete(REDIS_UNIQUE_PATTERN.format(hash=self.Meta.hash_name, value=key_value_pair))
+            else:
+                key_value_pair = '-'.join(self._retrieve_key_value_from_name(unique))
+                conn.delete(REDIS_UNIQUE_PATTERN.format(hash=self.Meta.hash_name, value=key_value_pair))
+        if not positions:
+            return
+        positions = json.loads(positions)
+        for indexes in getattr(self, INDEXES_KEYS):
+            for index in indexes:
+                key_value_pair = []
+                for key in index:
+                    key_value_pair.append('-'.join(self._retrieve_key_value_from_name(key)))
+                key_value_pair = '-'.join(key_value_pair)
+                if positions.get(key_value_pair):
+                    self._delete_big_keys(
+                        model_name=self.Meta.hash_name, primary_key=primary_key, value=key_value_pair,
+                        position=positions.get(key_value_pair)
+                    )
+
+    def _save_foreign_keys(self, primary_key):  # key job_id, foreign_key: process_id
+        foreign_positions = {}
+        for foreign_key in getattr(self, FOREIGN_KEYS):
+            _foreign_key: ForeignField = self.__dict__.get(foreign_key, '')
+            assert isinstance(_foreign_key, ForeignField)
+            foreign_name = _foreign_key.model.Meta.hash_name
+            assert conn.exists(REDIS_PRIMARY_KEY_PATTERN.format(hash=foreign_name, primary=_foreign_key.value))
+            position = self._set_big_keys(
+                model_name=foreign_name, primary_key=primary_key, value=_foreign_key.value
+            )
+            foreign_positions[REDIS_PRIMARY_FOREIGN_VALUE_PATTERN.format(
+                has=self.Meta.hash_name, foreign=foreign_name, value=_foreign_key.value)] = position
+        return foreign_positions
+
+    def _delete_foreign_keys(self, primary_key, positions):
+        if not positions:
+            return
+        positions = json.loads(positions)
+        for foreign_key in getattr(self, FOREIGN_KEYS):
+            _foreign_key: ForeignField = self.__dict__.get(foreign_key, '')
+            if positions.get(_foreign_key.value):
+                self._delete_big_keys(
+                    model_name=_foreign_key.model.Meta.hash_name, primary_key=primary_key, value=_foreign_key.value,
+                    position=positions.get(_foreign_key.value)
+                )
+
+    def _save_model(self, name, key, value):
+        if isinstance(value, dict):
+            conn.hset(name, key, json.dumps(value))
+        elif isinstance(value, list):
+            conn.hset(name, key, json.dumps(value))
+        elif isinstance(value, str):
+            conn.hset(name, key, value)
+        elif isinstance(value, int):
+            conn.hset(name, key, value)
 
     def save(self):
-        name = self.__dict__[self.primary_key].value
-        self._check_unique(name)
-        metadata = self._save_foreign_key(name)
+        primary_key = self.__dict__[self.primary_key].value
+        primary_name = REDIS_PRIMARY_KEY_PATTERN.format(hash=self.Meta.hash_name, primary=primary_key)
+        foreign_keys = self._save_foreign_keys(primary_key=primary_key)
+        indexes = self._save_indexes(primary_key=primary_key)
         for key, value in self.__dict__.items():
-            if isinstance(value, DatetimeField):
-                if not value.get_ori_value() and (value.auto_now or value.auto_now_add):
-                    value.value = datetime.now()
-                elif value.get_ori_value() and value.auto_now:
-                    value.value = datetime.now()
-            self._hset(f'{self.Meta.index_name}-{name}', key, value.get_ori_value())
-        self._hset(f'{self.Meta.index_name}-{name}', 'metadata', metadata)
-        return name
+            self._save_model(primary_name, key, value.serializer())
+        if foreign_keys:
+            self._save_model(primary_name, FOREIGN_KEYS, json.dumps(foreign_keys))
+        if indexes:
+            self._save_model(primary_name, INDEXES_KEYS, json.dumps(indexes))
+        return primary_key
 
     def update(self):
         raise NotImplementedError
 
-    @staticmethod
-    def delete(primary):
-        raise NotImplementedError
+    def delete(self):
+        primary_key = self.__dict__[self.primary_key].value
+        primary_name = REDIS_PRIMARY_KEY_PATTERN.format(hash=self.Meta.hash_name, primary=primary_key)
+        self._delete_foreign_keys(
+            primary_key, conn.hget(primary_name, FOREIGN_KEYS)
+        )
+        self._delete_indexes(
+            primary_key, conn.hget(primary_name, INDEXES_KEYS)
+        )
+        conn.delete(primary_name)
 
     @staticmethod
     def filter(**params):
@@ -134,11 +227,11 @@ class BaseModel(metaclass=ModelMeta):
 
     def _generate_primary_key(self):
         if not self.__dict__[self.primary_key].value:
-            return conn.incr(REDIS_PRIMARY_DEFAULT_INCR_KEY.format(index=self.Meta.index_name))
+            return conn.incr(REDIS_PRIMARY_DEFAULT_INCR_KEY.format(hash=self.Meta.hash_name))
         else:
             return self.__dict__[self.primary_key].value
 
     class Meta:
         unique_together = []
-        index_name = 'default'
+        hash_name = 'default'
         indexes = []

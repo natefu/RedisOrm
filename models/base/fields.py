@@ -109,6 +109,10 @@ class DatetimeField(FieldABC, metaclass=FieldMeta):
         else:
             self._value = value
 
+    def serializer(self):
+        if not self._value:
+            if value.auto
+
 
 class ListField(FieldABC, metaclass=FieldMeta):
     def __init__(self, default: list = list(), required=False):
@@ -175,4 +179,4 @@ class ForeignField(FieldABC, metaclass=FieldMeta):
                 raise ValueError
 
     def check_value(self, value):
-        return redis_conn.exists(REDIS_PRIMARY_KEY_PATTERN.format(index=self.model.index_name, primary=value))
+        return redis_conn.exists(REDIS_PRIMARY_KEY_PATTERN.format(hash=self.model.hash_name, primary=value))
