@@ -17,10 +17,13 @@ class FieldMeta(type):
 
 class FieldABC:
     def __init__(self, default, primary, unique, required):
-        self.value = default
+        if self.check_value(default):
+            self._value = default
         self.primary = primary
         self.unique = unique
         self.required = required
+        self.modified = True
+        self.indexes = []
 
     @property
     def value(self):
@@ -30,6 +33,7 @@ class FieldABC:
     def value(self, value):
         if self.check_value(value):
             self._value = value
+            self.modified = True
         else:
             raise ValueError
 
@@ -37,14 +41,17 @@ class FieldABC:
         return True
 
     def serializer(self):
-        return self._value
+        raise NotImplementedError
 
     def deserialize(self, value):
-        self.value = value
+        raise NotImplementedError
+
+    def __str__(self):
+        return self.serializer()
 
 
 class IntegerField(FieldABC, metaclass=FieldMeta):
-    def __init__(self, default=None, primary=False, unique=False, required=False):
+    def __init__(self, default=0, primary=False, unique=False, required=False):
         super().__init__(default, primary, unique, required)
 
     @property
@@ -54,22 +61,74 @@ class IntegerField(FieldABC, metaclass=FieldMeta):
 
     @value.setter
     def value(self, value):
-        self._value = self._validate(value)
+        if isinstance(value, int):
+            self._value = value
+        elif isinstance(value, str):
+            try:
+                self._value = int(value)
+            except ValueError:
+                raise AttributeError
+        else:
+            raise AttributeError
+        self.modified = True
 
-    def _validate(self, value):
+    def check_value(self, value):
         try:
-            return int(value)
+            return isinstance(value, int)
         except:
             raise ValueError
+
+    def serializer(self):
+        return str(self.value)
+
+    def deserialize(self, value):
+        self.value = value
+
+
+class BoolField(FieldABC, metaclass=FieldMeta):
+    def __init__(self, default=False, primary=False, unique=False, required=False):
+        super().__init__(default, primary, unique, required)
+
+    @property
+    def value(self):
+        assert self._value is not None
+        return self._value
+
+    @value.setter
+    def value(self, value):
+        if isinstance(value, bool):
+            self._value = value
+        elif value in ['0', 'false', 'False']:
+            self._value = False
+        elif value in ['1', 'true', 'True']:
+            self._value = True
+        else:
+            raise ValueError
+        self.modified = True
+
+    def check_value(self, value):
+        return isinstance(value, bool)
+
+    def serializer(self):
+        return '1' if self._value else '0'
+
+    def deserialize(self, value):
+        self.value = value
 
 
 class CharField(FieldABC, metaclass=FieldMeta):
     def __init__(self, default='', primary=False, unique=False, required=False):
         super().__init__(default, primary, unique, required)
 
+    def serializer(self):
+        return self._value
+
+    def deserialize(self, value):
+        self._value = str(value)
+
 
 class DatetimeField(FieldABC, metaclass=FieldMeta):
-    def __init__(self, default=datetime.now(), auto_now_add: bool = False, auto_now: bool = False, required=False):
+    def __init__(self, default=datetime.now().strftime(DATETIME_PATTERN), auto_now_add: bool = False, auto_now: bool = False, required=False):
         super().__init__(default, False, False, required)
         self._auto_now_add = auto_now_add
         self._auto_now = auto_now
@@ -92,11 +151,11 @@ class DatetimeField(FieldABC, metaclass=FieldMeta):
 
     @property
     def value(self):
+        print(self._value)
         if not self._value and self.auto_now:
             return datetime.now()
-        if not self._value and self.auto_now_add:
+        if self.auto_now_add:
             return datetime.now()
-        assert not self._value
         try:
             return datetime.strptime(self._value, DATETIME_PATTERN)
         except ValueError:
@@ -107,11 +166,18 @@ class DatetimeField(FieldABC, metaclass=FieldMeta):
         if isinstance(value, datetime):
             self._value = value.strftime(DATETIME_PATTERN)
         else:
-            self._value = value
+            try:
+                datetime.strptime(value, DATETIME_PATTERN)
+                self._value = value
+            except ValueError:
+                raise AttributeError
+        self.modified = True
 
     def serializer(self):
-        if not self._value:
-            if value.auto
+        return self.value.strftime(DATETIME_PATTERN)
+
+    def deserialize(self, value):
+        self.value = value
 
 
 class ListField(FieldABC, metaclass=FieldMeta):
@@ -131,8 +197,15 @@ class ListField(FieldABC, metaclass=FieldMeta):
         assert isinstance(value, list)
         try:
             self._value = json.dumps(value)
+            self.modified = True
         except:
             raise AttributeError
+
+    def serializer(self):
+        return self.value
+
+    def deserialize(self, value):
+        self.value = value
 
 
 class JsonField(FieldABC, metaclass=FieldMeta):
@@ -142,17 +215,32 @@ class JsonField(FieldABC, metaclass=FieldMeta):
     @property
     def value(self):
         try:
+            print(type(self._value))
             return json.loads(self._value)
         except:
             raise RuntimeError
 
     @value.setter
-    def value(self, value: dict):
-        assert isinstance(value, dict)
-        try:
-            self._value = json.dumps(value)
-        except:
-            raise AttributeError
+    def value(self, value: [dict, str]):
+        if isinstance(value, dict):
+            try:
+                self._value = json.dumps(value)
+                self.modified = True
+            except:
+                raise AttributeError
+        elif isinstance(value, str):
+            try:
+                json.loads(value)
+                self._value = value
+                self.modified = True
+            except:
+                raise AttributeError
+
+    def serializer(self):
+        return self.value
+
+    def deserialize(self, value):
+        self.value = value
 
 
 class ForeignField(FieldABC, metaclass=FieldMeta):
@@ -177,6 +265,15 @@ class ForeignField(FieldABC, metaclass=FieldMeta):
                 self._value = value
             else:
                 raise ValueError
+        self.modified = True
 
     def check_value(self, value):
+        if value is None:
+            return True
         return redis_conn.exists(REDIS_PRIMARY_KEY_PATTERN.format(hash=self.model.hash_name, primary=value))
+
+    def serializer(self):
+        return self.value
+
+    def deserialize(self, value):
+        self.value = value

@@ -1,5 +1,5 @@
 import json
-from .fields import FieldABC, IntegerField, ForeignField, DatetimeField
+from models.base.fields import FieldABC, IntegerField, ForeignField, DatetimeField
 from client import redis_conn as conn
 from constants.models import (
     REDIS_PRIMARY_DEFAULT_INCR_KEY, DEFAULT_PRIMARY_KEY, UNIQUE_TOGETHER, CONCRETE_FIELDS, PRIMARY_KEY, UNIQUE_KEYS,
@@ -7,6 +7,28 @@ from constants.models import (
     REDIS_INDEX_POS, BIG_KEY_LIMIT, REDIS_INDEX_PRIMARY_KEY_PATTERN, REDIS_PRIMARY_KEY_PATTERN,
     REDIS_PRIMARY_FOREIGN_VALUE_PATTERN,
 )
+
+
+class Trie:
+    def __init__(self):
+        self.loopup = {}
+
+    def insert(self, words):
+        tree = self.loopup
+        for word in words:
+            if word not in tree:
+                tree[word] = {}
+            tree = tree[word]
+
+    def search(self, words):
+        tree = self.loopup
+        indexes = []
+        for word in words:
+            if word not in tree:
+                return indexes
+            indexes.append(word)
+            tree = tree[word]
+        return indexes
 
 
 class ModelMeta(type):
@@ -31,24 +53,35 @@ class ModelMeta(type):
                 if isinstance(value, ForeignField):
                     foreign_keys.append(key)
         if not primary_count:
-            _concrete_field[DEFAULT_PRIMARY_KEY] = IntegerField(default=1, primary=True)
+            primary_value = IntegerField(primary=True)
+            _concrete_field[DEFAULT_PRIMARY_KEY] = primary_value
+            setattr(new_class, DEFAULT_PRIMARY_KEY, primary_value)
         unique_keys = [sorted(item) for item in uniques]
         setattr(new_class, CONCRETE_FIELDS, _concrete_field)
         setattr(new_class, PRIMARY_KEY, primary_key)
         setattr(new_class, UNIQUE_KEYS, unique_keys)
         setattr(new_class, FOREIGN_KEYS, foreign_keys)
-        indexes = set()
+        indexes = []
+        root = Trie()
         if hasattr(new_class.Meta, INDEXES_KEYS):
             for index in getattr(new_class.Meta, INDEXES_KEYS):
                 tmp_index = []
                 for element in index:
                     tmp_index.append(element)
-                    indexes.add(tmp_index)
+                    if tmp_index not in index:
+                        root.insert(tmp_index.copy())
+                        indexes.append(tmp_index.copy())
         for index in unique_keys:
             tmp_index = []
             for element in index:
                 tmp_index.append(element)
-                indexes.add(tmp_index)
+                if tmp_index not in index:
+                    root.insert(tmp_index.copy())
+                    indexes.append(tmp_index.copy())
+        for index in indexes:
+            for element in index:
+                value: FieldABC = getattr(new_class, element)
+                value.indexes.append(index)
         setattr(new_class, INDEXES_KEYS, indexes)
         return new_class
 
@@ -58,17 +91,17 @@ class ModelMeta(type):
 
 class BaseModel(metaclass=ModelMeta):
     def __init__(self, **kwargs):
-        self.__dict__ = getattr(self, FOREIGN_KEYS)
-        for key, value in self.__dict__.items():
-            if value.primary:
-                if kwargs.get(key):
-                    self.__dict__[key].value = kwargs.get(key)
-                else:
-                    self.__dict__[key].value = self._generate_primary_key()
-            elif hasattr(kwargs, key):
-                self.__dict__[key].value = kwargs.get(key)
-            elif value.required:
-                raise AttributeError
+        for key, value in getattr(self, CONCRETE_FIELDS).items():
+            if isinstance(value, FieldABC):
+                if value.primary:
+                    if key in kwargs:
+                        value._value = kwargs.get(key)
+                    else:
+                        value._value = self._generate_primary_key()
+                elif key in kwargs:
+                    value.value = kwargs.get(key)
+                elif value.required:
+                    raise AttributeError
 
     def _hset(self, name, key, value):
         if isinstance(value, dict):
@@ -123,13 +156,12 @@ class BaseModel(metaclass=ModelMeta):
                 assert conn.setnx(REDIS_UNIQUE_PATTERN.format(hash=self.Meta.hash_name, value=key_value_pair), 1)
         index_positions = {}
         for indexes in getattr(self, INDEXES_KEYS):
+            key_value_pair = []
             for index in indexes:
-                key_value_pair = []
-                for key in index:
-                    key_value_pair.append('-'.join(self._retrieve_key_value_from_name(key)))
-                key_value_pair = '-'.join(key_value_pair)
-                position = self._set_big_keys(model_name=self.Meta.hash_name, primary_key=primary_key, value=key_value_pair)
-                index_positions[key_value_pair] = position
+                key_value_pair.append('-'.join(self._retrieve_key_value_from_name(index)))
+            key_value_pair = '-'.join(key_value_pair)
+            position = self._set_big_keys(model_name=self.Meta.hash_name, primary_key=primary_key, value=key_value_pair)
+            index_positions[key_value_pair] = position
         return index_positions
 
     def _delete_indexes(self, primary_key, positions):
@@ -147,21 +179,21 @@ class BaseModel(metaclass=ModelMeta):
             return
         positions = json.loads(positions)
         for indexes in getattr(self, INDEXES_KEYS):
+            key_value_pair = []
             for index in indexes:
-                key_value_pair = []
-                for key in index:
-                    key_value_pair.append('-'.join(self._retrieve_key_value_from_name(key)))
-                key_value_pair = '-'.join(key_value_pair)
-                if positions.get(key_value_pair):
-                    self._delete_big_keys(
-                        model_name=self.Meta.hash_name, primary_key=primary_key, value=key_value_pair,
-                        position=positions.get(key_value_pair)
-                    )
+                key_value_pair.append('-'.join(self._retrieve_key_value_from_name(index)))
+            key_value_pair = '-'.join(key_value_pair)
+            if positions.get(key_value_pair):
+                self._delete_big_keys(
+                    model_name=self.Meta.hash_name, primary_key=primary_key, value=key_value_pair,
+                    position=positions.get(key_value_pair)
+                )
 
     def _save_foreign_keys(self, primary_key):  # key job_id, foreign_key: process_id
         foreign_positions = {}
+        _concrete_fields = getattr(self, CONCRETE_FIELDS)
         for foreign_key in getattr(self, FOREIGN_KEYS):
-            _foreign_key: ForeignField = self.__dict__.get(foreign_key, '')
+            _foreign_key: ForeignField = _concrete_fields.get(foreign_key, '')
             assert isinstance(_foreign_key, ForeignField)
             foreign_name = _foreign_key.model.Meta.hash_name
             assert conn.exists(REDIS_PRIMARY_KEY_PATTERN.format(hash=foreign_name, primary=_foreign_key.value))
@@ -176,8 +208,9 @@ class BaseModel(metaclass=ModelMeta):
         if not positions:
             return
         positions = json.loads(positions)
+        _concrete_fields = getattr(self, CONCRETE_FIELDS)
         for foreign_key in getattr(self, FOREIGN_KEYS):
-            _foreign_key: ForeignField = self.__dict__.get(foreign_key, '')
+            _foreign_key: ForeignField = _concrete_fields.get(foreign_key, '')
             if positions.get(_foreign_key.value):
                 self._delete_big_keys(
                     model_name=_foreign_key.model.Meta.hash_name, primary_key=primary_key, value=_foreign_key.value,
@@ -195,23 +228,33 @@ class BaseModel(metaclass=ModelMeta):
             conn.hset(name, key, value)
 
     def save(self):
-        primary_key = self.__dict__[self.primary_key].value
+        _concrete_fields = getattr(self, CONCRETE_FIELDS)
+        primary_key = _concrete_fields.get(self.primary_key).value
         primary_name = REDIS_PRIMARY_KEY_PATTERN.format(hash=self.Meta.hash_name, primary=primary_key)
         foreign_keys = self._save_foreign_keys(primary_key=primary_key)
         indexes = self._save_indexes(primary_key=primary_key)
-        for key, value in self.__dict__.items():
+        for key, value in _concrete_fields.items():
             self._save_model(primary_name, key, value.serializer())
         if foreign_keys:
             self._save_model(primary_name, FOREIGN_KEYS, json.dumps(foreign_keys))
         if indexes:
             self._save_model(primary_name, INDEXES_KEYS, json.dumps(indexes))
+        for key, value in _concrete_fields.items():
+            if isinstance(value, FieldABC):
+                value.modified = False
         return primary_key
 
     def update(self):
-        raise NotImplementedError
+        '''
+        for key, value in self.__dict__.items():
+            if isinstance(value, FieldABC):
+                if value.modified:
+                    if key in
+        '''
 
     def delete(self):
-        primary_key = self.__dict__[self.primary_key].value
+        _concrete_fields = getattr(self, CONCRETE_FIELDS)
+        primary_key = _concrete_fields.get(self.primary_key).value
         primary_name = REDIS_PRIMARY_KEY_PATTERN.format(hash=self.Meta.hash_name, primary=primary_key)
         self._delete_foreign_keys(
             primary_key, conn.hget(primary_name, FOREIGN_KEYS)
@@ -221,15 +264,24 @@ class BaseModel(metaclass=ModelMeta):
         )
         conn.delete(primary_name)
 
-    @staticmethod
+    @classmethod
     def filter(**params):
-        raise NotImplementedError
+        pass
+
+    @classmethod
+    def get(cls, id):
+        primary_name = REDIS_PRIMARY_KEY_PATTERN.format(hash=cls.Meta.hash_name, primary=id)
+        value: dict = conn.hgetall(primary_name)
+        if not value:
+            raise ValueError
+        return cls(**value)
 
     def _generate_primary_key(self):
-        if not self.__dict__[self.primary_key].value:
+        fields = getattr(self, CONCRETE_FIELDS)
+        if not fields.get(self.primary_key).value:
             return conn.incr(REDIS_PRIMARY_DEFAULT_INCR_KEY.format(hash=self.Meta.hash_name))
         else:
-            return self.__dict__[self.primary_key].value
+            return fields.get(self.primary_key).value
 
     class Meta:
         unique_together = []
