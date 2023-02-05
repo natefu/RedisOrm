@@ -22,10 +22,8 @@ class Process(BaseModel):
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    #process = Process(name='test', version=9, scheme={}, deprecated=False)
-    #print(process.save())
-    process = Process.get(16)
-    print(process.name)
+    process = Process(name='test', version=19, scheme={}, deprecated=False)
+    process.save()
+    process.scheme = {'test': 'test'}
+    process.save()
     process.delete()
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/

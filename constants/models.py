@@ -16,4 +16,5 @@ PRIMARY_KEY = 'primary_key'
 UNIQUE_KEYS = 'unique_keys'
 FOREIGN_KEYS = 'foreign_keys'
 INDEXES_KEYS = 'indexes'
+INDEX_TREE = 'index_tree'
 BIG_KEY_LIMIT = 10000

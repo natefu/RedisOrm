@@ -1,7 +1,8 @@
 import json
 from client import redis_conn
-from datetime import datetime
 from constants.models import REDIS_PRIMARY_KEY_PATTERN
+from datetime import datetime
+from exception.exceptions import InvalidInputException, SystemError
 
 
 DATETIME_PATTERN = '%Y-%m-%d %H:%M:%S'
@@ -35,7 +36,7 @@ class FieldABC:
             self._value = value
             self.modified = True
         else:
-            raise ValueError
+            raise InvalidInputException(value)
 
     def check_value(self, value):
         return True
@@ -67,16 +68,16 @@ class IntegerField(FieldABC, metaclass=FieldMeta):
             try:
                 self._value = int(value)
             except ValueError:
-                raise AttributeError
+                raise InvalidInputException(f'{value} should be int')
         else:
-            raise AttributeError
+            raise InvalidInputException(f'{value} should be int')
         self.modified = True
 
     def check_value(self, value):
         try:
             return isinstance(value, int)
         except:
-            raise ValueError
+            raise InvalidInputException(f'{value} should be int')
 
     def serializer(self):
         return str(self.value)
@@ -103,7 +104,7 @@ class BoolField(FieldABC, metaclass=FieldMeta):
         elif value in ['1', 'true', 'True']:
             self._value = True
         else:
-            raise ValueError
+            raise InvalidInputException(f'{value} should be boolean')
         self.modified = True
 
     def check_value(self, value):
@@ -151,15 +152,15 @@ class DatetimeField(FieldABC, metaclass=FieldMeta):
 
     @property
     def value(self):
-        print(self._value)
-        if not self._value and self.auto_now:
+        if self._value:
+            try:
+                return datetime.strptime(self._value, DATETIME_PATTERN)
+            except ValueError:
+                raise SystemError(f'{self._value} should be datetime str')
+        if self.auto_now:
             return datetime.now()
         if self.auto_now_add:
             return datetime.now()
-        try:
-            return datetime.strptime(self._value, DATETIME_PATTERN)
-        except ValueError:
-            raise ValueError
 
     @value.setter
     def value(self, value):
@@ -170,7 +171,7 @@ class DatetimeField(FieldABC, metaclass=FieldMeta):
                 datetime.strptime(value, DATETIME_PATTERN)
                 self._value = value
             except ValueError:
-                raise AttributeError
+                raise InvalidInputException(f'{value} should be datetime')
         self.modified = True
 
     def serializer(self):
@@ -190,16 +191,17 @@ class ListField(FieldABC, metaclass=FieldMeta):
         try:
             return json.loads(self._value)
         except:
-            raise RuntimeError
+            raise SystemError(f'{self._value} should be json str')
 
     @value.setter
     def value(self, value: list):
-        assert isinstance(value, list)
+        if not isinstance(value, list):
+            raise InvalidInputException(f'{value} should be list')
         try:
             self._value = json.dumps(value)
             self.modified = True
         except:
-            raise AttributeError
+            raise InvalidInputException(f'{value} should be list')
 
     def serializer(self):
         return self.value
@@ -215,10 +217,9 @@ class JsonField(FieldABC, metaclass=FieldMeta):
     @property
     def value(self):
         try:
-            print(type(self._value))
             return json.loads(self._value)
         except:
-            raise RuntimeError
+            raise SystemError(f'{self._value} should be json str')
 
     @value.setter
     def value(self, value: [dict, str]):
@@ -227,14 +228,16 @@ class JsonField(FieldABC, metaclass=FieldMeta):
                 self._value = json.dumps(value)
                 self.modified = True
             except:
-                raise AttributeError
+                raise InvalidInputException(f'{value} should be dict or dict str')
         elif isinstance(value, str):
             try:
                 json.loads(value)
                 self._value = value
                 self.modified = True
             except:
-                raise AttributeError
+                raise InvalidInputException(f'{value} should be dict or dict str')
+        else:
+            raise InvalidInputException(f'{value} should be dict or dict str')
 
     def serializer(self):
         return self.value
@@ -264,7 +267,7 @@ class ForeignField(FieldABC, metaclass=FieldMeta):
             if self.check_value(value):
                 self._value = value
             else:
-                raise ValueError
+                raise InvalidInputException(f'{value} should be other model primary key')
         self.modified = True
 
     def check_value(self, value):
