@@ -1,3 +1,4 @@
+REDIS_PRIMARY_PATTERN = '{hash}-primary'
 REDIS_PRIMARY_KEY_PATTERN = '{hash}-{primary}'
 REDIS_PRIMARY_DEFAULT_INCR_KEY = '{hash}-incr'
 REDIS_INDEX_PATTERN = '{hash}-index-{key_value_pair}'
@@ -17,4 +18,5 @@ UNIQUE_KEYS = 'unique_keys'
 FOREIGN_KEYS = 'foreign_keys'
 INDEXES_KEYS = 'indexes'
 INDEX_TREE = 'index_tree'
+PRIMARY_POSITION = 'primary_position'
 BIG_KEY_LIMIT = 10000

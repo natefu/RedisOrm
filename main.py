@@ -22,8 +22,30 @@ class Process(BaseModel):
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    process = Process(name='test', version=19, scheme={}, deprecated=False)
+    '''
+    for i in range(30):
+        process = Process(name=f'test-{i}', version=3, scheme={'test': i}, deprecated=False)
+        process.save()
+
+    for i in range(30):
+        process = Process.get(id=51+i)
+        print(process.id)
+        print(process.name)
+        print(process.version)
+    process = Process.get(name='test-1', version=4)
+    process_1 = Process.get(id=82)
+    process_2 = Process.get(id=83)
+    print(process_2.name)
+    print(process_1.name)
+    
+    processes = Process.filter(name='test-1', deprecated=False)
+    for process in processes:
+        print(process.id)
+    '''
+    process_1 = Process.get(id=82)
+    process = Process(name='test-31', version=3, scheme={'test': 31}, deprecated=False)
+
+    print(process.id)
     process.save()
-    process.scheme = {'test': 'test'}
-    process.save()
-    process.delete()
+    print(process.id)
+    print(process_1.__dict__)

@@ -19,6 +19,14 @@ class ObjectNotFoundException(BaseError):
         Exception.__init__(self, self.err_msg)
 
 
+class GetMoreObjectsException(BaseError):
+    def __init__(self, message, count):
+        self.err_msg = {
+            'message': f'input {str(message)} retrieve {count} objects'
+        }
+        Exception.__init__(self, self.err_msg)
+
+
 class ValueRequiredException(BaseError):
     def __init__(self, message):
         self.err_msg = {
@@ -32,4 +40,10 @@ class SystemError(BaseError):
         self.err_msg = {
             'message': f'Internal Failure: {message}'
         }
+        Exception.__init__(self, self.err_msg)
+
+
+class DuplicatedValueError(BaseError):
+    def __init__(self, message):
+        self.err_msg = f'{message} should be unique'
         Exception.__init__(self, self.err_msg)
