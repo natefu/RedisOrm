@@ -123,7 +123,7 @@ class BaseModel(object, metaclass=ModelMeta):
         if hasattr(self, name):
             value: FieldABC = getattr(self, name)
             assert isinstance(value, FieldABC)
-            return name, value.serializer()
+            return name, value.serialize()
         else:
             return None, None
 
@@ -292,14 +292,11 @@ class BaseModel(object, metaclass=ModelMeta):
         primary_position = self._save_primary(primary_key=primary_key)
         self._save_model(primary_name, PRIMARY_POSITION, primary_position)
         for key, value in _concrete_fields.items():
-            self._save_model(primary_name, key, value.serializer())
+            self._save_model(primary_name, key, value.serialize())
         if foreign_keys:
             self._save_model(primary_name, FOREIGN_KEYS, json.dumps(foreign_keys))
         if indexes:
             self._save_model(primary_name, INDEXES_KEYS, json.dumps(indexes))
-        for key, value in _concrete_fields.items():
-            if isinstance(value, FieldABC):
-                value.modified = False
 
     def save(self):
         _concrete_fields = self.__dict__
@@ -358,8 +355,6 @@ class BaseModel(object, metaclass=ModelMeta):
     def initialize_object(cls, value):
         new_object = cls(**value)
         _concrete_fields = new_object.__dict__
-        for _, value in _concrete_fields.items():
-            value.modified = False
         return new_object
 
     @classmethod

@@ -18,12 +18,12 @@ class FieldMeta(type):
 
 class FieldABC:
     def __init__(self, default, primary, unique, required):
-        if self.check_value(default):
-            self._value = default
+        if not isinstance(primary, bool) or not isinstance(unique, bool) or not isinstance(required, bool):
+            raise InvalidInputException('field input is invalid, please check you field input')
+        self.value = default
         self.primary = primary
         self.unique = unique
         self.required = required
-        self.modified = True
         self.indexes = []
 
     @property
@@ -34,21 +34,20 @@ class FieldABC:
     def value(self, value):
         if self.check_value(value):
             self._value = value
-            self.modified = True
         else:
             raise InvalidInputException(value)
 
     def check_value(self, value):
         return True
 
-    def serializer(self):
+    def serialize(self):
         raise NotImplementedError
 
     def deserialize(self, value):
         raise NotImplementedError
 
     def __str__(self):
-        return self.serializer()
+        return self.serialize()
 
 
 class IntegerField(FieldABC, metaclass=FieldMeta):
@@ -71,15 +70,11 @@ class IntegerField(FieldABC, metaclass=FieldMeta):
                 raise InvalidInputException(f'{value} should be int')
         else:
             raise InvalidInputException(f'{value} should be int')
-        self.modified = True
 
     def check_value(self, value):
-        try:
-            return isinstance(value, int)
-        except:
-            raise InvalidInputException(f'{value} should be int')
+        return isinstance(value, int) or value.isdigit()
 
-    def serializer(self):
+    def serialize(self):
         return str(self.value)
 
     def deserialize(self, value):
@@ -105,12 +100,12 @@ class BoolField(FieldABC, metaclass=FieldMeta):
             self._value = True
         else:
             raise InvalidInputException(f'{value} should be boolean')
-        self.modified = True
+
 
     def check_value(self, value):
         return isinstance(value, bool)
 
-    def serializer(self):
+    def serialize(self):
         return '1' if self._value else '0'
 
     def deserialize(self, value):
@@ -121,7 +116,7 @@ class CharField(FieldABC, metaclass=FieldMeta):
     def __init__(self, default='', primary=False, unique=False, required=False):
         super().__init__(default, primary, unique, required)
 
-    def serializer(self):
+    def serialize(self):
         return self._value
 
     def deserialize(self, value):
@@ -172,9 +167,8 @@ class DatetimeField(FieldABC, metaclass=FieldMeta):
                 self._value = value
             except ValueError:
                 raise InvalidInputException(f'{value} should be datetime')
-        self.modified = True
 
-    def serializer(self):
+    def serialize(self):
         return self.value.strftime(DATETIME_PATTERN)
 
     def deserialize(self, value):
@@ -199,11 +193,10 @@ class ListField(FieldABC, metaclass=FieldMeta):
             raise InvalidInputException(f'{value} should be list')
         try:
             self._value = json.dumps(value)
-            self.modified = True
         except:
             raise InvalidInputException(f'{value} should be list')
 
-    def serializer(self):
+    def serialize(self):
         return self.value
 
     def deserialize(self, value):
@@ -226,20 +219,18 @@ class JsonField(FieldABC, metaclass=FieldMeta):
         if isinstance(value, dict):
             try:
                 self._value = json.dumps(value)
-                self.modified = True
             except:
                 raise InvalidInputException(f'{value} should be dict or dict str')
         elif isinstance(value, str):
             try:
                 json.loads(value)
                 self._value = value
-                self.modified = True
             except:
                 raise InvalidInputException(f'{value} should be dict or dict str')
         else:
             raise InvalidInputException(f'{value} should be dict or dict str')
 
-    def serializer(self):
+    def serialize(self):
         return self.value
 
     def deserialize(self, value):
@@ -268,14 +259,13 @@ class ForeignField(FieldABC, metaclass=FieldMeta):
                 self._value = value
             else:
                 raise InvalidInputException(f'{value} should be other model primary key')
-        self.modified = True
 
     def check_value(self, value):
         if value is None:
             return True
         return redis_conn.exists(REDIS_PRIMARY_KEY_PATTERN.format(hash=self.model.hash_name, primary=value))
 
-    def serializer(self):
+    def serialize(self):
         return self.value
 
     def deserialize(self, value):
