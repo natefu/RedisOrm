@@ -1,7 +1,9 @@
+import json
 import pytest
 from exception.exceptions import InvalidInputException
+from datetime import datetime
 from models.base.fields import (
-    FieldABC, IntegerField, CharField, BoolField, DatetimeField, ListField, JsonField, ForeignField
+    FieldABC, IntegerField, CharField, BoolField, DatetimeField, ListField, JsonField, ForeignField, DATETIME_PATTERN
 )
 
 
@@ -11,10 +13,26 @@ class Test_Field:
         with pytest.raises(InvalidInputException):
             FieldABC(default="hello_world", primary='test', unique='test', required='test')
 
-    def test_default_initial_method(self):
+    def test_default_integer_field_happy_case(self):
         integer_field = IntegerField()
         assert integer_field.value == 0
         assert integer_field.serialize() == '0'
+        assert not integer_field.unique
+        assert not integer_field.primary
+        assert not integer_field.required
+
+    def test_int_integer_field_happy_case(self):
+        integer_field = IntegerField(1)
+        assert integer_field.value == 1
+        assert integer_field.serialize() == '1'
+        assert not integer_field.unique
+        assert not integer_field.primary
+        assert not integer_field.required
+
+    def test_string_integer_field_happy_case(self):
+        integer_field = IntegerField('1')
+        assert integer_field.value == 1
+        assert integer_field.serialize() == '1'
         assert not integer_field.unique
         assert not integer_field.primary
         assert not integer_field.required
@@ -41,3 +59,240 @@ class Test_Field:
         integer_field.deserialize('3')
         assert integer_field.value == 3
         assert integer_field.serialize() == '3'
+
+    def test_bool_field_happy_case(self):
+        bool_field = BoolField()
+        assert not bool_field.value
+        assert bool_field.serialize() == '0'
+
+    def test_bool_field_happy_case_with_true_value(self):
+        for value in [1, '1', 'True', 'true', True]:
+            bool_field = BoolField(value)
+            assert bool_field.value
+            assert bool_field.serialize() == '1'
+
+    def test_bool_field_happy_case_with_false_value(self):
+        for value in [0, '0', 'False', 'false', False]:
+            bool_field = BoolField(value)
+            assert not bool_field.value
+            assert bool_field.serialize() == '0'
+
+    def test_bool_field_bad_case_with_invalid_value(self):
+        for value in [3, '3', 'happy_case']:
+            with pytest.raises(InvalidInputException):
+                BoolField(value)
+
+    def test_bool_field_happy_case_with_set_valid_field(self):
+        bool_field = BoolField()
+        assert not bool_field.value
+        for value in [1, '1', 'True', 'true', True]:
+            bool_field.value = value
+            assert bool_field.value
+            assert bool_field.serialize() == '1'
+
+    def test_bool_field_base_case_with_set_invalid_field(self):
+        bool_field = BoolField()
+        assert not bool_field.value
+        for value in [3, '3', 'happy_case']:
+            with pytest.raises(InvalidInputException):
+                bool_field.value = value
+
+    def test_bool_field_happy_case_with_deserialize_valid_field(self):
+        bool_field = BoolField()
+        assert not bool_field.value
+        for value in [1, '1', 'True', 'true', True]:
+            bool_field.deserialize(value)
+            assert bool_field.value
+            assert bool_field.serialize() == '1'
+
+    def test_bool_field_base_case_with_deserialize_invalid_field(self):
+        bool_field = BoolField()
+        assert not bool_field.value
+        for value in [3, '3', 'happy_case']:
+            with pytest.raises(InvalidInputException):
+                bool_field.deserialize(value)
+
+    def test_char_field_happy_case(self):
+        char_field = CharField()
+        assert char_field.value == char_field.serialize() == ''
+
+    def test_char_field_happy_case_with_any_input(self):
+        for value, d_value in [(1, '1'), (True, 'True'), ('hello', 'hello'), (list, "<class 'list'>"),
+                               (set, "<class 'set'>"), (map, "<class 'map'>"), (["a"], "['a']"), (None, 'None')]:
+            char_field = CharField(value)
+            assert char_field.value == char_field.serialize() == d_value
+
+    def test_char_field_happy_case_with_set_value(self):
+        char_field = CharField()
+        assert char_field.value == char_field.serialize() == ''
+        for value, d_value in [(1, '1'), (True, 'True'), ('hello', 'hello'), (list, "<class 'list'>"),
+                               (set, "<class 'set'>"), (map, "<class 'map'>"), (["a"], "['a']"), (None, 'None')]:
+            char_field.value = value
+            assert char_field.value == char_field.serialize() == d_value
+
+    def test_char_field_happy_case_with_deserialize_value(self):
+        char_field = CharField()
+        assert char_field.value == char_field.serialize() == ''
+        for value, d_value in [(1, '1'), (True, 'True'), ('hello', 'hello'), (list, "<class 'list'>"),
+                               (set, "<class 'set'>"), (map, "<class 'map'>"), (["a"], "['a']"), (None, 'None')]:
+            char_field.deserialize(value)
+            assert char_field.value == char_field.serialize() == d_value
+
+    def test_date_time_field_happy_case(self):
+        datetime_field = DatetimeField()
+        assert isinstance(datetime_field.value, datetime)
+        assert isinstance(datetime.strptime(datetime_field.serialize(), DATETIME_PATTERN), datetime)
+
+    def test_date_time_field_happy_case_with_auto_now_add(self):
+        previous_datetime_string = '1993-03-02 13:24:32'
+        previous_datetime = datetime.strptime(previous_datetime_string, DATETIME_PATTERN)
+        datetime_field = DatetimeField(previous_datetime, auto_now_add=True)
+        assert datetime_field.value == previous_datetime
+        assert datetime_field.serialize() == previous_datetime_string
+
+    def test_date_time_field_happy_case_with_auto_now_add_none_value(self):
+        datetime_field = DatetimeField(None, auto_now_add=True)
+        assert isinstance(datetime_field.value, datetime)
+        assert isinstance(datetime.strptime(datetime_field.serialize(), DATETIME_PATTERN), datetime)
+
+    def test_date_time_field_happy_case_with_auto_now_add_empty_value(self):
+        datetime_field = DatetimeField('', auto_now_add=True)
+        assert isinstance(datetime_field.value, datetime)
+        assert isinstance(datetime.strptime(datetime_field.serialize(), DATETIME_PATTERN), datetime)
+
+    def test_date_time_field_happy_case_with_auto_now(self):
+        previous_datetime_string = '1993-03-02 13:24:32'
+        previous_datetime = datetime.strptime(previous_datetime_string, DATETIME_PATTERN)
+        datetime_field = DatetimeField(previous_datetime, auto_now=True)
+        assert datetime_field.value != previous_datetime
+        assert datetime_field.serialize() != previous_datetime_string
+        assert isinstance(datetime_field.value, datetime)
+        assert isinstance(datetime.strptime(datetime_field.serialize(), DATETIME_PATTERN), datetime)
+
+    def test_date_time_field_happy_case_with_auto_now_none_value(self):
+        datetime_field = DatetimeField(None, auto_now=True)
+        assert isinstance(datetime_field.value, datetime)
+        assert isinstance(datetime.strptime(datetime_field.serialize(), DATETIME_PATTERN), datetime)
+
+    def test_date_time_field_happy_case_with_auto_now_empty_value(self):
+        datetime_field = DatetimeField('', auto_now=True)
+        assert isinstance(datetime_field.value, datetime)
+        assert isinstance(datetime.strptime(datetime_field.serialize(), DATETIME_PATTERN), datetime)
+
+    def test_date_time_field_bad_case_with_invalid_input(self):
+        with pytest.raises(InvalidInputException):
+            DatetimeField('bad_case')
+
+    def test_date_time_field_happy_case_with_set_valid_value(self):
+        datetime_field = DatetimeField()
+        previous_datetime_string = '1993-03-02 13:24:32'
+        previous_datetime = datetime.strptime(previous_datetime_string, DATETIME_PATTERN)
+        datetime_field.value = previous_datetime
+        assert datetime_field.value == previous_datetime
+        assert datetime_field.serialize() == previous_datetime_string
+
+    def test_date_time_field_happy_case_with_serialize_valid_value(self):
+        datetime_field = DatetimeField()
+        previous_datetime_string = '1993-03-02 13:24:32'
+        previous_datetime = datetime.strptime(previous_datetime_string, DATETIME_PATTERN)
+        datetime_field.deserialize(previous_datetime_string)
+        assert datetime_field.value == previous_datetime
+        assert datetime_field.serialize() == previous_datetime_string
+
+    def test_date_time_field_bad_case_with_serialize_invalid_value(self):
+        datetime_field = DatetimeField()
+        previous_datetime_string = '1993-03fasdfas-02 13:24:2'
+        with pytest.raises(InvalidInputException):
+            datetime_field.deserialize(previous_datetime_string)
+
+    def test_list_field_happy_case(self):
+        list_field = ListField()
+        assert list_field.value == []
+        assert list_field.serialize() == '[]'
+
+    def test_list_field_happy_case_with_valid_input(self):
+        input_list = [1, 'char']
+        list_field = ListField(input_list)
+        assert list_field.value == input_list
+        assert list_field.serialize() == json.dumps(input_list)
+
+    def test_list_field_bad_case_with_invalid_input(self):
+        with pytest.raises(InvalidInputException):
+            ListField('a')
+
+    def test_list_field_happy_case_with_set_valid_input(self):
+        list_field = ListField()
+        input_list = [1, 'char']
+        list_field.value = input_list
+        assert list_field.value == input_list
+        assert list_field.serialize() == json.dumps(input_list)
+
+    def test_list_field_bad_case_with_set_invalid_input(self):
+        list_field = ListField()
+        with pytest.raises(InvalidInputException):
+            list_field.value = 'a'
+
+    def test_list_field_happy_case_with_deserialize_valid_input(self):
+        list_field = ListField()
+        input_list = [1, 'char']
+        list_field.deserialize(json.dumps(input_list))
+        assert list_field.value == input_list
+        assert list_field.serialize() == json.dumps(input_list)
+
+    def test_list_field_happy_case_with_deserialize_invalid_input(self):
+        list_field = ListField()
+        input_list = {1: "valid"}
+        with pytest.raises(InvalidInputException):
+            list_field.deserialize(json.dumps(input_list))
+
+    def test_list_field_happy_case_with_deserialize_invalid_input_2(self):
+        list_field = ListField()
+        input_list = {1: "valid"}
+        with pytest.raises(InvalidInputException):
+            list_field.deserialize(input_list)
+
+    def test_json_field_happy_case(self):
+        json_field = JsonField()
+        assert json_field.value == {}
+        assert json_field.serialize() == '{}'
+
+    def test_json_field_happy_case_with_valid_input(self):
+        input_dict = {'1': 'char'}
+        json_field = JsonField(input_dict)
+        assert json_field.value == input_dict
+        assert json_field.serialize() == json.dumps(input_dict)
+
+    def test_json_field_bad_case_with_invalid_input(self):
+        with pytest.raises(InvalidInputException):
+            JsonField('a')
+
+    def test_json_field_happy_case_with_set_valid_input(self):
+        json_field = JsonField()
+        input_json = {'1': 'char'}
+        json_field.value = input_json
+        assert json_field.value == input_json
+        assert json_field.serialize() == json.dumps(input_json)
+
+    def test_json_field_bad_case_with_set_invalid_input(self):
+        json_field = JsonField()
+        with pytest.raises(InvalidInputException):
+            json_field.value = 'a'
+
+    def test_json_field_happy_case_with_deserialize_valid_input(self):
+        json_field = JsonField()
+        input_json = {'1': 'char'}
+        json_field.deserialize(json.dumps(input_json))
+        assert json_field.value == input_json
+        assert json_field.serialize() == json.dumps(input_json)
+
+    def test_json_field_happy_case_with_deserialize_invalid_input(self):
+        json_field = JsonField()
+        input_list = [1, "valid"]
+        with pytest.raises(InvalidInputException):
+            json_field.deserialize(json.dumps(input_list))
+
+    def test_json_field_happy_case_with_deserialize_invalid_input_2(self):
+        json_field = JsonField()
+        input_dict = {'1': "valid"}
+        with pytest.raises(InvalidInputException):
+            json_field.deserialize(input_dict)
