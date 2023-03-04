@@ -1,9 +1,9 @@
 from .exceptions import (
-    InvalidInputException, ObjectNotFoundException, ValueRequiredException, SystemError, GetMoreObjectsException,
+    InvalidInputException, ObjectNotFoundException, ValueRequiredException, RedisOrmSystemError, GetMoreObjectsException,
     DuplicatedValueError,
 )
 
 __all__ = [
-    'InvalidInputException', 'ObjectNotFoundException', 'ValueRequiredException', 'SystemError',
+    'InvalidInputException', 'ObjectNotFoundException', 'ValueRequiredException', 'RedisOrmSystemError',
     'GetMoreObjectsException', 'DuplicatedValueError',
 ]

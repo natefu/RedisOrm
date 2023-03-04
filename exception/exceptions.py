@@ -35,7 +35,7 @@ class ValueRequiredException(BaseError):
         Exception.__init__(self, self.err_msg)
 
 
-class SystemError(BaseError):
+class RedisOrmSystemError(BaseError):
     def __init__(self, message):
         self.err_msg = {
             'message': f'Internal Failure: {message}'

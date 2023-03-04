@@ -1,9 +1,9 @@
 import json
 
-from client import redis_conn
+from client import conn
 from constants.models import REDIS_PRIMARY_KEY_PATTERN
 from datetime import datetime
-from exception.exceptions import InvalidInputException, SystemError
+from exception.exceptions import InvalidInputException, RedisOrmSystemError
 
 DATETIME_PATTERN = '%Y-%m-%d %H:%M:%S'
 
@@ -57,7 +57,7 @@ class IntegerField(FieldABC, metaclass=FieldMeta):
     @property
     def value(self):
         assert self._value is not None
-        return self._value
+        return int(self._value)
 
     @value.setter
     def value(self, value):
@@ -72,7 +72,7 @@ class IntegerField(FieldABC, metaclass=FieldMeta):
             raise InvalidInputException(f'{value} should be int')
 
     def check_value(self, value):
-        return isinstance(value, int) or value.isdigit()
+        return isinstance(value, int) or (isinstance(value, str) and value.isdigit())
 
     def serialize(self):
         return str(self.value)
@@ -131,7 +131,7 @@ class CharField(FieldABC, metaclass=FieldMeta):
 
 
 class DatetimeField(FieldABC, metaclass=FieldMeta):
-    def __init__(self, default=datetime.now(), auto_now_add: bool = False, auto_now: bool = False, required=False):
+    def __init__(self, default=None, auto_now_add: bool = False, auto_now: bool = False, required=False):
         self._auto_now_add = auto_now_add
         self._auto_now = auto_now
         super().__init__(default, False, False, required)
@@ -154,36 +154,42 @@ class DatetimeField(FieldABC, metaclass=FieldMeta):
 
     @property
     def value(self):
-        if self.auto_now:
-            return datetime.now()
         if self._value:
             try:
                 return datetime.strptime(self._value, DATETIME_PATTERN)
             except ValueError:
                 raise SystemError(f'{self._value} should be datetime str')
-        if self.auto_now_add:
-            return datetime.now()
+        return None
 
     @value.setter
     def value(self, value):
-        if self.auto_now:
-            self._value = datetime.now().strftime(DATETIME_PATTERN)
+        if not value:
+            self._value = value
         elif isinstance(value, datetime):
             self._value = value.strftime(DATETIME_PATTERN)
+        elif isinstance(value, str):
+            try:
+                datetime.strptime(value, DATETIME_PATTERN)
+                self._value = value
+            except ValueError:
+                raise RedisOrmSystemError(f'{value} should be datetime str')
         else:
-            if not value and self.auto_now_add:
-                self._value = datetime.now().strftime(DATETIME_PATTERN)
-            else:
-                raise InvalidInputException(f'{value} should be datetime')
+            raise InvalidInputException(f'{value} should be datetime')
 
     def serialize(self):
-        return self.value.strftime(DATETIME_PATTERN)
+        if not self.value:
+            return None
+        return self._value
 
     def deserialize(self, value):
         try:
             self.value = datetime.strptime(value, DATETIME_PATTERN)
         except ValueError:
             raise InvalidInputException(f'{value} should be datetime')
+
+    def deal(self):
+        if self.auto_now or (not self._value and self.auto_now_add):
+            self._value = datetime.now().strftime(DATETIME_PATTERN)
 
 
 class ListField(FieldABC, metaclass=FieldMeta):
@@ -198,12 +204,15 @@ class ListField(FieldABC, metaclass=FieldMeta):
             raise SystemError(f'{self._value} should be json str')
 
     @value.setter
-    def value(self, value: list):
-        if not isinstance(value, list):
-            raise InvalidInputException(f'{value} should be list')
-        try:
-            self._value = json.dumps(value)
-        except:
+    def value(self, value: [list, str]):
+        if isinstance(value, list):
+            try:
+                self._value = json.dumps(value)
+            except:
+                raise InvalidInputException(f'{value} should be list')
+        elif isinstance(value, str):
+            self.deserialize(value)
+        else:
             raise InvalidInputException(f'{value} should be list')
 
     def serialize(self):
@@ -236,6 +245,8 @@ class JsonField(FieldABC, metaclass=FieldMeta):
                 self._value = json.dumps(value)
             except:
                 raise InvalidInputException(f'{value} should be dict or dict str')
+        elif isinstance(value, str):
+            self.deserialize(value)
         else:
             raise InvalidInputException(f'{value} should be dict or dict str')
 
@@ -287,7 +298,7 @@ class ForeignField(FieldABC, metaclass=FieldMeta):
             raise InvalidInputException(f'{value} does not exist')
 
     def check_value(self, value):
-        return redis_conn.exists(REDIS_PRIMARY_KEY_PATTERN.format(hash=self.model.Meta.hash_name, primary=value))
+        return conn.check_name(REDIS_PRIMARY_KEY_PATTERN.format(hash=self.model.Meta.hash_name, primary=value))
 
     def serialize(self):
         return self.value
