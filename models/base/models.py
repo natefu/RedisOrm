@@ -281,11 +281,9 @@ class BaseModel(object, metaclass=ModelMeta):
             conn.set_hash(name, key, value)
 
     def _create_new(self, primary_key, primary_name, _concrete_fields):
-        print('here')
         for field in _concrete_fields:
             model_field = getattr(self, field)
             if isinstance(model_field, DatetimeField):
-                print(f'{field} deal')
                 model_field.deal()
         foreign_keys = self._save_foreign_keys(primary_key=primary_key)
         indexes = self._save_indexes(primary_key=primary_key)
