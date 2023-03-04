@@ -5,7 +5,6 @@ from constants.models import REDIS_PRIMARY_KEY_PATTERN
 from datetime import datetime
 from exception.exceptions import InvalidInputException, SystemError
 
-
 DATETIME_PATTERN = '%Y-%m-%d %H:%M:%S'
 
 
@@ -254,8 +253,7 @@ class JsonField(FieldABC, metaclass=FieldMeta):
 
 class ForeignField(FieldABC, metaclass=FieldMeta):
     def __init__(self, model, unique=False, required=False):
-        super().__init__(None, False, unique, required)
-        self.model = model
+        super().__init__(model, False, unique, required)
 
     @property
     def value(self):
@@ -264,21 +262,32 @@ class ForeignField(FieldABC, metaclass=FieldMeta):
     @value.setter
     def value(self, value):
         from .models import BaseModel
-        if not value:
-            self._value = None
-        elif isinstance(value, BaseModel):
-            self._value = value.__dict__.get(self.model.primary_key)
+        if not hasattr(self, 'model'):
+            if isinstance(value, BaseModel):
+                self.model = value.__class__
+                self._value = self.retrieve_value(value.__dict__.get(value.primary_key))
+            else:
+                raise InvalidInputException(f'{value} should be other model primary key')
         else:
-            assert isinstance(value, int) or isinstance(value, str)
-            if self.check_value(value):
-                self._value = value
+            if isinstance(value, BaseModel):
+                if value.__class__ != self.model:
+                    raise InvalidInputException(f'{value} should be other model primary key')
+                else:
+                    self._value = self.retrieve_value(value.__dict__.get(value.primary_key))
+            elif isinstance(value, int) or isinstance(value, str):
+                self._value = self.retrieve_value(value)
             else:
                 raise InvalidInputException(f'{value} should be other model primary key')
 
+    def retrieve_value(self, value):
+        result = self.check_value(value)
+        if result:
+            return value
+        else:
+            raise InvalidInputException(f'{value} does not exist')
+
     def check_value(self, value):
-        if value is None:
-            return True
-        return redis_conn.exists(REDIS_PRIMARY_KEY_PATTERN.format(hash=self.model.hash_name, primary=value))
+        return redis_conn.exists(REDIS_PRIMARY_KEY_PATTERN.format(hash=self.model.Meta.hash_name, primary=value))
 
     def serialize(self):
         return self.value

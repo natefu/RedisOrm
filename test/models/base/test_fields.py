@@ -2,9 +2,29 @@ import json
 import pytest
 from exception.exceptions import InvalidInputException
 from datetime import datetime
+from unittest import mock
 from models.base.fields import (
     FieldABC, IntegerField, CharField, BoolField, DatetimeField, ListField, JsonField, ForeignField, DATETIME_PATTERN
 )
+from models.base.models import BaseModel
+
+
+class Test(BaseModel):
+    name = CharField()
+
+    class Meta:
+        hash_name = 'test'
+
+
+class Test2(BaseModel):
+    name = CharField()
+
+    class Meta:
+        hash_name = 'test'
+
+
+class Test3:
+    pass
 
 
 class Test_Field:
@@ -296,3 +316,110 @@ class Test_Field:
         input_dict = {'1': "valid"}
         with pytest.raises(InvalidInputException):
             json_field.deserialize(input_dict)
+
+    def test_foreign_field_happy_case(self):
+        test = Test(name='test')
+        test.id = 1
+        foreign_field = ForeignField(test)
+        assert foreign_field.model == Test
+        assert foreign_field._value == 1
+        assert foreign_field.serialize() == 1
+
+    @mock.patch.object(ForeignField, 'check_value')
+    def test_foreign_field_happy_case_with_set_valid_input(self, mock_class):
+        test = Test(name='test')
+        test.save()
+        test.id = 1
+        test2 = Test(name='test')
+        test2.save()
+        test2.id = 2
+        foreign_field = ForeignField(test)
+        mock_class.return_value = 1
+        for (value, result) in [(2, 2), ('2', '2'), (test2, 2)]:
+            foreign_field.value = value
+            assert foreign_field.model == Test
+            assert foreign_field._value == result
+            assert foreign_field.serialize() == result
+
+    def test_foreign_field_happy_case_with_set_invalid_input(self):
+        test = Test(name='test')
+        test.save()
+        test.id = 1
+        foreign_field = ForeignField(test)
+        test2 = Test2(name='test')
+        test2.save()
+        test2.id = 1
+        test3 = Test3()
+        for value in [[2], test2, test3]:
+            with pytest.raises(InvalidInputException):
+                foreign_field.value = value
+
+    @mock.patch.object(ForeignField, 'check_value')
+    def test_foreign_field_happy_case_with_deserialize_valid_value(self, mock_class):
+        test = Test(name='test')
+        test.save()
+        test.id = 1
+        test2 = Test(name='test')
+        test2.save()
+        test2.id = 2
+        foreign_field = ForeignField(test)
+        mock_class.return_value = 1
+        for (value, result) in [(2, 2), ('2', '2'), (test2, 2)]:
+            foreign_field.deserialize(value)
+            assert foreign_field.model == Test
+            assert foreign_field._value == result
+            assert foreign_field.serialize() == result
+
+    def test_foreign_field_happy_case_with_deserialize_invalid_input(self):
+        test = Test(name='test')
+        test.save()
+        test.id = 1
+        foreign_field = ForeignField(test)
+        test2 = Test2(name='test')
+        test2.save()
+        test2.id = 1
+        test3 = Test3()
+        for value in [[2], test2, test3]:
+            with pytest.raises(InvalidInputException):
+                foreign_field.deserialize(value)
+
+    def test_foreign_field_bad_case_without_model(self):
+        with pytest.raises(InvalidInputException):
+            ForeignField(1)
+
+    @mock.patch.object(ForeignField, 'check_value')
+    def test_foreign_field_bad_case_primary_key_not_in_redis(self, mock_class):
+        test = Test(name='test')
+        test.save()
+        test.id = 1
+        with pytest.raises(InvalidInputException):
+            mock_class.return_value = 0
+            ForeignField(test)
+
+    @mock.patch.object(ForeignField, 'check_value')
+    def test_foreign_field_bad_case_set_primary_key_not_in_redis(self, mock_class):
+        test = Test(name='test')
+        test.save()
+        test.id = 1
+        test2 = Test(name='test')
+        test2.save()
+        test2.id = 2
+        foreign_field = ForeignField(test)
+        mock_class.return_value = 0
+        for (value, result) in [(2, 2), ('2', '2'), (test2, 2)]:
+            with pytest.raises(InvalidInputException):
+                foreign_field.value = value
+
+    @mock.patch.object(ForeignField, 'check_value')
+    def test_foreign_field_bad_case_primary_deserialize_key_not_in_redis(self, mock_class):
+        test = Test(name='test')
+        test.save()
+        test.id = 1
+        test2 = Test(name='test')
+        test2.save()
+        test2.id = 2
+        foreign_field = ForeignField(test)
+        mock_class.return_value = 0
+        for (value, result) in [(2, 2), ('2', '2'), (test2, 2)]:
+            with pytest.raises(InvalidInputException):
+                foreign_field.deserialize(value)
